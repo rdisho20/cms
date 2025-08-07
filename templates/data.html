@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+
+{% block content %}
+    <ul>
+        {% for file in files %}
+            <li><a href="{{ url_for('download_file', file=file) }}">{{ file }}</a></li>
+        {% endfor %}
+    </ul>
+{% endblock %}
