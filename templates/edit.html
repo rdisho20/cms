@@ -3,7 +3,7 @@
 {% block content %}
     <p>Edit content of '{{ filename }}':</p>
     <form action="{{ url_for('save_changes', filename=filename) }}" method="post">
-        <p><textarea rows="20" cols="60" name="content">{{ file_content }}</textarea></p>
-        <input type="submit" value="Save Changes">
+        <p><textarea name="content" id="content" rows="20" cols="100">{{ content }}</textarea></p>
+        <button type="submit">Save Changes</button>
     </form>
 {% endblock %}

@@ -17,10 +17,15 @@ import os
 app = Flask(__name__)
 app.secret_key = 'secret1'
 
+def get_data_path():
+    if app.config['TESTING']:
+        return os.path.join(os.path.dirname(__file__), 'tests', 'data')
+    else:
+        return os.path.join(os.path.dirname(__file__), 'cms', 'data')
+
 @app.before_request
 def get_data_directory():
-    g.root = os.path.abspath(os.path.dirname(__file__))
-    g.data_dir = os.path.join(g.root, "cms", "data")
+    g.data_dir = get_data_path()
 
 @app.route('/')
 def index():
