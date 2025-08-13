@@ -1,7 +1,9 @@
 import unittest
 import shutil
+from flask import session
 import os
 from app import app
+import yaml
 
 class CMSTest(unittest.TestCase):
     def setUp(self):
@@ -16,6 +18,12 @@ class CMSTest(unittest.TestCase):
     def create_document(self, name, content=""):
         with open(os.path.join(self.data_path, name), 'w') as file:
             file.write(content)
+    
+    def admin_session(self):
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess['username'] = 'admin'
+            return c
 
     def test_index(self):
         self.create_document("about.txt")
@@ -65,35 +73,176 @@ class CMSTest(unittest.TestCase):
                         response.get_data(as_text=True))
 
     def test_editing_document(self):
+        client = self.admin_session()
         self.create_document("changes.txt")
 
-        response = self.client.get("/changes.txt/edit")
+        response = client.get("/changes.txt/edit")
         self.assertEqual(response.status_code, 200)
         self.assertIn("<textarea", response.get_data(as_text=True))
         self.assertIn('<button type="submit"', response.get_data(as_text=True))
     
+    def test_editing_document_signed_out(self):
+        self.create_document("changes.txt")
+
+        response = self.client.get("/changes.txt/edit")
+        self.assertEqual(response.status_code, 302)
+        follow_response = self.client.get(response.headers['Location'])
+        self.assertIn("You must be signed in to do that.",
+                      follow_response.get_data(as_text=True))
+    
     def test_updating_document(self):
         # Set up: Ensure the file exists before we try to update it.
         self.create_document("changes.txt")
+        client = self.admin_session()
 
         # Execute POST Request
-        with (self.client.post('/changes.txt',
+        with (client.post('/changes.txt',
                              data={'content': 'Make changes test!'})
                              as response):
             self.assertEqual(response.status_code, 302)
         
         # Execute GET Request to test the flash message
-        with self.client.get(response.headers['Location']) as response:
+        with client.get(response.headers['Location']) as response:
             self.assertEqual(response.status_code, 200)
-            self.assertIn("CHANGES.TXT has been updated!", response.get_data(as_text=True))
+            self.assertIn("changes.txt has been updated!", response.get_data(as_text=True))
         
         # Execute GET Request to test the file changes
-        with self.client.get('/changes.txt') as response:
+        with client.get('/changes.txt') as response:
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.content_type, "text/plain; charset=utf-8")
             self.assertIn("Make changes test!", response.get_data(as_text=True))
-
     
+    def test_updating_document_signed_out(self):
+        self.create_document("changes.txt")
+
+        with (self.client.post('/changes.txt',
+                             data={'content': 'Make changes test!'})
+                             as response):
+            self.assertEqual(response.status_code, 302)
+
+        with self.client.get(response.headers['Location']) as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("You must be signed in to do that.",
+                          response.get_data(as_text=True))
+    
+    def test_viewing_new_document_page(self):
+        client = self.admin_session()
+        response = client.get("/new")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content_type, "text/html; charset=utf-8")
+        self.assertIn("<input", response.get_data(as_text=True))
+        self.assertIn('<button type="submit"', response.get_data(as_text=True))
+
+    def test_viewing_new_document_page_signed_out(self):
+        response = self.client.get("/new")
+        self.assertEqual(response.status_code, 302)
+        follow_response = self.client.get(response.headers['Location'])
+        self.assertIn("You must be signed in to do that.",
+                      follow_response.get_data(as_text=True))
+    
+    def test_creating_new_document(self):
+        client = self.admin_session()
+        # Execute POST request to create new file, follow redirects to check flash mssg
+        response = client.post('/create',
+                                    data={'filename': 'test.txt'},
+                                    follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("test.txt has been created.",
+                      response.get_data(as_text=True))
+        
+        # Execute GET to see if new file appears on index page
+        response = client.get('/')
+        self.assertIn('test.txt', response.get_data(as_text=True))
+        
+        # Execute POST request to create new file w/ 'test.txt' file (already exists)
+        with client.post('/create', data={'filename': 'test.txt'}) as response:
+            self.assertEqual(response.status_code, 422)
+            self.assertIn("test.txt already exists.",
+                          response.get_data(as_text=True))
+    
+    def test_creating_new_document_without_filename(self):
+        client = self.admin_session()
+        response = client.post('/create', data={'filename': ''})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("A name is required.", response.get_data(as_text=True))
+    
+    def test_creating_new_document_with_unsupported_filetype(self):
+        client = self.admin_session()
+        response = client.post('/create', data={'filename': 'test.mpg'})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("That file extension is not supported.",
+                      response.get_data(as_text=True))
+    
+    def test_creating_new_document_signed_out(self):
+        response = self.client.post('/create',
+                                    data={'filename': 'test.txt'})
+        self.assertEqual(response.status_code, 302)
+        follow_response = self.client.get(response.headers['Location'])
+        self.assertIn("You must be signed in to do that.",
+                      follow_response.get_data(as_text=True))
+    
+    def test_deleting_document(self):
+        client = self.admin_session()
+        self.create_document("test.txt")
+
+        response = client.post('/delete/test.txt', follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("test.txt has been deleted!",
+                      response.get_data(as_text=True))
+        
+        response = client.get('/')
+        self.assertNotIn("test.txt", response.get_data(as_text=True))
+    
+    def test_deleting_document_signed_out(self):
+        self.create_document("test.txt")
+
+        response = self.client.post('/delete/test.txt')
+        self.assertEqual(response.status_code, 302)
+        follow_response = self.client.get(response.headers['Location'])
+        self.assertIn("You must be signed in to do that.",
+                      follow_response.get_data(as_text=True))
+    
+    def test_sign_in_page(self):
+        response = self.client.get('/users/signin')
+        self.assertIn("Username:", response.get_data(as_text=True))
+        self.assertIn('<button type="submit', response.get_data(as_text=True))
+    
+    def test_sign_in_invalid_credentials(self):
+        response = self.client.post('/users/signin',
+                                    data={
+                                        'username': 'yoyo',
+                                        'password': '1234',
+                                    },
+                                    follow_redirects=True)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Invalid credentials", response.get_data(as_text=True))
+
+    def test_sign_in_admin_then_sign_out_admin(self):
+        response = self.client.post('/users/signin',
+                                    data={
+                                        'username': 'admin',
+                                        'password': 'secret',
+                                    },
+                                    follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Welcome!", response.get_data(as_text=True))
+        self.assertIn("Signed in as admin.", response.get_data(as_text=True))
+
+        response = self.client.post('/users/signout', follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("You have been signed out.",
+                      response.get_data(as_text=True))
+        self.assertIn("Sign In", response.get_data(as_text=True))
+
+    def test_require_sign_in(self):
+        response = self.client.post('/delete/history.txt', follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("You must be signed in to do that.",
+                      response.get_data(as_text=True))
+
+        
+
 '''LS test
     def test_updating_document(self):
         response = self.client.post("/changes.txt",

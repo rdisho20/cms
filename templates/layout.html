@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='stylesheets/app.css') }}">
   <title>CMS</title>
 </head>
 <body>
@@ -11,11 +12,15 @@
   </header>
 
   <main>
+    {% for message in get_flashed_messages() %}
+      <p class="message">{{ message }}</p>
+    {% endfor %}
+
     {% block content %}{% endblock %}
   </main>
 
   <footer>
-    <p>&copy; 2025 Mah Dude Industries</p>
+    <p>&copy; 2025</p>
   </footer>
 </body>
 </html>
